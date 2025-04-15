@@ -1,0 +1,105 @@
+data = readtable('smart_grid_dataset.csv');
+
+% Load the dataset
+data = readtable('smart_grid_dataset.csv', 'VariableNamingRule', 'preserve');
+
+
+% Convert all columns to numeric
+data_numeric = zeros(height(data), width(data));
+for i = 1:width(data)
+    col = data{:, i};
+    if islogical(col)
+        data_numeric(:, i) = double(col);
+    elseif iscategorical(col)
+        data_numeric(:, i) = double(col);
+    elseif iscellstr(col) || isstring(col)
+        [~, ~, numericCol] = unique(col);
+        data_numeric(:, i) = numericCol;
+    elseif isnumeric(col)
+        data_numeric(:, i) = col;
+    else
+        error(['Unsupported data type in column ', num2str(i)]);
+    end
+end
+
+% Split inputs and target
+X = data_numeric(:, 1:end-1);     % Input features
+Y = data_numeric(:, end);         % Target (Electricity Price)
+
+% Choose 6 relevant features manually
+selected_features = [1, 2, 3, 5, 6, 10];
+X_reduced = X(:, selected_features);
+
+% Normalize
+X_norm = normalize(X_reduced, 'range');
+Y_norm = normalize(Y, 'range');
+
+% Use a subset of the dataset
+subset_size = 2000;
+idx = randperm(size(X_norm,1), subset_size);
+X_train = X_norm(idx, :);
+Y_train = Y_norm(idx);
+
+% Use fuzzy clustering with fewer clusters
+options = genfisOptions('FCMClustering');
+options.NumClusters = 5;  % Reduce complexity
+fis = genfis(X_train, Y_train, options);
+
+% Train ANFIS
+[trainedFIS, trainError] = anfis([X_train Y_train], fis, [50 0 0.01 0.9 1.1]);
+
+% Predict
+Y_pred = evalfis(X_norm, trainedFIS);
+Y_pred_actual = rescale(Y_pred, min(Y), max(Y));
+
+% Compare predicted vs actual from full dataset
+actual_vals = Y(:);
+predicted_vals = Y_pred_actual(:);
+
+% Feature impact (correlation with electricity price)
+featureNames = {'Voltage', 'Current', 'Power Consumption', ...
+    'Reactive Power', 'Power Factor', 'Solar Power', 'Wind Power', ...
+    'Grid Supply', 'Voltage Fluctuation', 'Overload Condition', ...
+    'Transformer Fault', 'Temperature', 'Humidity'};
+
+correlations = zeros(1, size(X, 2));
+for i = 1:size(X, 2)
+    correlations(i) = corr(X(:, i), Y, 'Type', 'Pearson');
+end
+
+[sortedCorr, idx_corr] = sort(abs(correlations), 'descend');
+sortedFeatures = featureNames(idx_corr);
+
+% Plot feature importance (bar chart)
+X_subset = X(:, 1:13);  % Ensure only the intended features are included
+correlations = zeros(1, size(X_subset, 2));
+
+for i = 1:size(X_subset, 2)
+    correlations(i) = corr(X_subset(:, i), Y, 'Type', 'Pearson');
+end
+
+% Sort correlations
+[sortedCorr, idx_corr] = sort(abs(correlations), 'descend');
+sortedFeatures = featureNames(idx_corr);
+
+% Plot feature importance (bar chart)
+figure;
+bar(sortedCorr);
+xticks(1:length(sortedFeatures));
+xticklabels(sortedFeatures);
+xtickangle(45);
+ylabel('Correlation with Electricity Price');
+title('Feature Impact on Electricity Price');
+grid on;
+
+
+% Plot predicted vs actual electricity price
+subplot(2,1,2);
+plot(actual_vals, 'b-', 'DisplayName', 'Actual');
+hold on;
+plot(predicted_vals, 'r--', 'DisplayName', 'Predicted');
+xlabel('Sample Index');
+ylabel('Electricity Price (USD/kWh)');
+title('Predicted vs Actual Electricity Price');
+legend;
+grid on;
